@@ -1,12 +1,24 @@
 """推送通道：SMTP 邮件（必选）+ Server酱 微信（可选）。"""
 import logging
 import os
+import re
 import smtplib
 from email.header import Header
 from email.mime.text import MIMEText
 from email.utils import formataddr
 
 log = logging.getLogger("daily-report")
+
+
+def _parse_recipients(raw: str) -> list:
+    parts = re.split(r"[,;，；\s]+", raw.strip())
+    seen, out = set(), []
+    for part in parts:
+        part = part.strip()
+        if part and "@" in part and part not in seen:
+            seen.add(part)
+            out.append(part)
+    return out
 
 
 def _config():
@@ -24,12 +36,15 @@ def _config():
 
 
 def send_email(subject: str, html_body: str) -> None:
-    host, port, user, pwd, to, tls = _config()
+    host, port, user, pwd, to_raw, tls = _config()
+    to = _parse_recipients(to_raw)
+    if not to:
+        raise ValueError("MAIL_TO 中没有有效的收件邮箱")
 
     msg = MIMEText(html_body, "html", "utf-8")
     msg["Subject"] = Header(subject, "utf-8")
-    msg["From"] = formataddr((str(Header("每日财经简报", "utf-8")), user))
-    msg["To"] = to
+    msg["From"] = formataddr((str(Header("CHE直早报", "utf-8")), user))
+    msg["To"] = ", ".join(to)
 
     if tls == "ssl":
         server = smtplib.SMTP_SSL(host, port, timeout=30)
@@ -47,8 +62,8 @@ def send_email(subject: str, html_body: str) -> None:
 
     with server:
         server.login(user, pwd)
-        server.sendmail(user, [to], msg.as_string())
-    log.info("邮件已通过 %s:%s 发送至 %s（TLS=%s）", host, port, to, tls)
+        server.sendmail(user, to, msg.as_string())
+    log.info("邮件已通过 %s:%s 发送至 %s（TLS=%s）", host, port, ", ".join(to), tls)
 
 
 def send_serverchan(title: str, desp: str) -> None:

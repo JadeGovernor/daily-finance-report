@@ -46,7 +46,7 @@ SECTIONS = [
 
 def test_build_report_html():
     html_body, md_body = report.build_report(date(2026, 8, 13), QUOTES, MARKET_POSITION, SECTIONS, MARKET_STATS)
-    assert "📈 每日财经简报" in html_body
+    assert "📈 CHE直早报" in html_body
     assert "数据来源：新浪实时行情 + 东方财富历史K线" in html_body
     assert "板块一 · 财经市场概览" in html_body
     assert "位置（近3年分位）" in html_body

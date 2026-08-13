@@ -1,4 +1,4 @@
-"""每日财经简报：采集 -> AI筛选 -> 组装 -> 推送。"""
+"""CHE直早报：采集 -> AI筛选 -> 组装 -> 推送。"""
 import argparse
 import logging
 import os
@@ -68,7 +68,7 @@ def build_error_report(today, failed_sources, output_dir: Path):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="每日财经简报工具")
+    parser = argparse.ArgumentParser(description="CHE直早报工具")
     parser.add_argument("--date", help="报告日期 YYYY-MM-DD（默认今天）")
     parser.add_argument("--limit", type=int, default=50, help="每个数据源最多采集条数")
     parser.add_argument("--no-push", action="store_true", help="只生成报告，不发送")
@@ -85,7 +85,7 @@ def main():
         html = build_error_report(report_date, [], output_dir)
         if not no_push:
             try:
-                push.send_email(f"⚠️ 每日财经简报 {report_date:%Y-%m-%d}（数据源异常）", html)
+                push.send_email(f"⚠️ CHE直早报 {report_date:%Y-%m-%d}（数据源异常）", html)
                 log.info("已发送异常通知邮件")
             except Exception as exc:
                 log.error("异常通知邮件发送失败: %s", exc)
@@ -130,7 +130,7 @@ def main():
     html_body, md_body = report.build_report(
         report_date, quotes, market_position, sections, stats,
         extra_blocks=extra_blocks,
-        title="📬 每日信息简报",
+        title="📬 CHE直早报",
         subtitle="财经 · 产品经理话题 · AI 突破 · 被动收入（每日聚合）",
     )
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -142,7 +142,7 @@ def main():
         log.info("--no-push：跳过推送（可用浏览器打开 output/report.html 预览）")
         return 0
 
-    subject = f"📬 每日信息简报 {report_date:%Y-%m-%d}"
+    subject = f"📬 CHE直早报 {report_date:%Y-%m-%d}"
     try:
         push.send_email(subject, html_body)
         log.info("邮件已发送")

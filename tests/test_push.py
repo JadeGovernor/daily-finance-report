@@ -56,6 +56,48 @@ def test_send_email_builds_and_sends(monkeypatch):
     assert parsed.get_body(preferencelist=("html",)).get_content() == "<p>测试正文</p>"
 
 
+def test_send_email_multiple_recipients(monkeypatch):
+    monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
+    monkeypatch.setenv("SMTP_PORT", "465")
+    monkeypatch.setenv("SMTP_USER", "sender@example.com")
+    monkeypatch.setenv("SMTP_PASS", "secret")
+    monkeypatch.setenv("MAIL_TO", " a@b.com , c@d.com；a@b.com e@f.com ")
+    monkeypatch.delenv("SMTP_TLS", raising=False)
+
+    sent = {}
+
+    class FakeSSL:
+        def __init__(self, *a, **k):
+            pass
+        def __enter__(self):
+            return self
+        def __exit__(self, *a):
+            return False
+        def login(self, user, pwd):
+            sent["login"] = (user, pwd)
+        def sendmail(self, frm, to, message):
+            sent["mail"] = (frm, to, message)
+
+    monkeypatch.setattr(smtplib, "SMTP_SSL", FakeSSL)
+    push.send_email("测试主题", "<p>正文</p>")
+    assert sent["mail"][1] == ["a@b.com", "c@d.com", "e@f.com"]
+
+
+def test_send_email_invalid_recipients(monkeypatch):
+    monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
+    monkeypatch.setenv("SMTP_PORT", "465")
+    monkeypatch.setenv("SMTP_USER", "u")
+    monkeypatch.setenv("SMTP_PASS", "p")
+    monkeypatch.setenv("MAIL_TO", "  ,; ")
+    monkeypatch.delenv("SMTP_TLS", raising=False)
+    try:
+        push.send_email("s", "<p>b</p>")
+    except ValueError as exc:
+        assert "MAIL_TO" in str(exc)
+    else:
+        raise AssertionError("收件人为空时应抛出 ValueError")
+
+
 def test_send_email_invalid_tls_mode(monkeypatch):
     monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
     monkeypatch.setenv("SMTP_PORT", "465")

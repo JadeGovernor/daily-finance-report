@@ -20,7 +20,7 @@ PASSIVE_ITEMS = [
 def test_default_output_unchanged():
     """不带新参数时，输出与 v2 版完全一致（默认标题/无新板块）。"""
     html_body, _ = report.build_report(date(2026, 8, 13), [], [], [])
-    assert "📈 每日财经简报" in html_body
+    assert "📈 CHE直早报" in html_body
     assert "💼 产品经理" not in html_body
     assert "AI 最新技术突破" not in html_body
 
@@ -33,7 +33,7 @@ def test_extra_blocks_order():
     ]
     html_body, md_body = report.build_report(
         date(2026, 8, 13), [], [], [], extra_blocks=blocks,
-        title="📬 每日信息简报", subtitle="财经 · 产品经理话题 · AI 突破 · 被动收入（每日聚合）",
+        title="📬 CHE直早报", subtitle="财经 · 产品经理话题 · AI 突破 · 被动收入（每日聚合）",
     )
     # 顺序：财经(板块一) → 产品经理 → AI → 被动收入 → 附
     idx_finance = html_body.index("板块一 · 财经市场概览")
@@ -42,8 +42,8 @@ def test_extra_blocks_order():
     idx_passive = html_body.index("💰 被动收入方法")
     idx_appendix = html_body.index("📖 附 · 四大交易系统说明")
     assert idx_finance < idx_pm < idx_ai < idx_passive < idx_appendix
-    assert "📬 每日信息简报" in html_body
-    assert "📬 每日信息简报" in md_body
+    assert "📬 CHE直早报" in html_body
+    assert "📬 CHE直早报" in md_body
 
 
 def test_pm_block_render():

@@ -1,4 +1,4 @@
-# 📈 每日财经简报（Daily Finance Report）
+# 📈 CHE直早报（Daily Finance Report）
 
 每天北京时间 9:00 自动采集全网财经信息 → 用真实行情数据计算市场位置 → AI 按你的四大交易系统筛选机会 → 生成简报 → 邮件推送（可选叠加微信 Server酱）。
 
@@ -28,7 +28,7 @@
 | `SMTP_TLS`（可选） | `ssl` / `starttls` / `none` / `auto`（默认自动回退） |
 | `SMTP_USER` | 邮箱地址 |
 | `SMTP_PASS` | **授权码**（不是登录密码，见下） |
-| `MAIL_TO` | 收件邮箱 |
+| `MAIL_TO` | 收件邮箱（多个用逗号分隔，如 `a@x.com,b@x.com`） |
 | `DEEPSEEK_API_KEY` | [platform.deepseek.com](https://platform.deepseek.com) 申请的 API key |
 | `SENDKEY`（可选） | [sct.ftqq.com](https://sct.ftqq.com) 的 Server酱 SendKey，配置后微信同步推送 |
 

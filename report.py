@@ -185,7 +185,7 @@ def _empty_note_md(t: int, stats_by_key: dict) -> str:
 
 
 def build_report(report_date, quotes, market_position=None, sections=None, stats=None,
-                 extra_blocks=None, title="📈 每日财经简报", subtitle="四大交易系统（校正版）· 长线视角"):
+                 extra_blocks=None, title="📈 CHE直早报", subtitle="四大交易系统（校正版）· 长线视角"):
     date_str = report_date.strftime("%Y-%m-%d")
     market_position = market_position or []
     sections = sections or []
@@ -306,11 +306,11 @@ def build_error_report(report_date, failed_sources):
 <html lang="zh"><head><meta charset="utf-8"><title>数据源异常 {date_str}</title></head>
 <body style="font-family:-apple-system,'PingFang SC',sans-serif;background:#fafafa;padding:24px">
 <div style="max-width:640px;margin:0 auto;background:#fff;border:1px solid #e0e0e0;border-radius:8px;padding:20px">
-<h1 style="font-size:18px;color:#b71c1c">⚠️ 每日财经简报生成失败</h1>
+<h1 style="font-size:18px;color:#b71c1c">⚠️ CHE直早报生成失败</h1>
 <p>日期：{date_str}</p><p>原因：所有数据源采集失败（{html_mod.escape(detail)}）。</p>
 <p style="color:#666;font-size:13px">请稍后手动触发工作流重试，或检查网络与数据源可用性。</p>
 </div></body></html>"""
-    md_body = f"# ⚠️ 每日财经简报生成失败\n\n日期：{date_str}\n\n原因：所有数据源采集失败（{detail}）。"
+    md_body = f"# ⚠️ CHE直早报生成失败\n\n日期：{date_str}\n\n原因：所有数据源采集失败（{detail}）。"
     return html_body, md_body
 
 
