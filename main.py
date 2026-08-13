@@ -79,10 +79,12 @@ def main():
         log.warning("行情获取失败: %s", exc)
 
     api_key = os.environ.get("DEEPSEEK_API_KEY", "")
-    cards, ai_overview = ai_filter.run(items, api_key)
-    log.info("机会卡片 %d 条，AI 概览 %d 条", len(cards), len(ai_overview))
+    sections, market_position, market_overview = ai_filter.run(items, api_key)
+    log.info("四大类整理完成：机会 %d 条 / 线索 %d 条",
+             sum(len(s["opportunities"]) for s in sections),
+             sum(len(s["related"]) for s in sections))
 
-    html_body, md_body = report.build_report(report_date, quotes, cards, ai_overview)
+    html_body, md_body = report.build_report(report_date, quotes, market_position, market_overview, sections)
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / "report.html").write_text(html_body, encoding="utf-8")
     (output_dir / "report.md").write_text(md_body, encoding="utf-8")

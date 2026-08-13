@@ -1,41 +1,58 @@
-"""AI 筛选与规则降级测试。"""
-from ai_filter import fallback_cards, score_item, validate_cards, run
+"""AI 筛选与规则降级测试（四大框架分类版）。"""
+from ai_filter import (
+    fallback_sections, score_type, validate_result, run,
+    TYPE_KEYWORDS, TYPES,
+)
 
 
 def _item(title, summary="", url="http://x"):
     return {"title": title, "summary": summary, "url": url, "source": "测试"}
 
 
-def test_score_priority():
-    hot = _item("某公司财报预增", "业绩大幅增长，回购股份")
-    plain = _item("普通天气新闻", "今天下雨")
-    assert score_item(hot) > score_item(plain)
+def test_score_type_matches_keywords():
+    assert score_type(_item("黄金价格突破关键阻力位 底部反转"), 2) >= 2
+    assert score_type(_item("AI 大模型 机器人新赛道"), 3) >= 2
+    assert score_type(_item("普通天气新闻", "今天下雨"), 1) == 0
 
 
-def test_fallback_cards_dedupe_and_limit():
-    items = [_item(f"标题{i}", "财报 政策 并购 降息 中标 涨价 扩产 大单 回购 增持") for i in range(20)]
-    items.append(items[0])  # 重复
-    cards = fallback_cards(items, limit=8)
-    assert 1 <= len(cards) <= 8
-    titles = [c["title"] for c in cards]
-    assert len(titles) == len(set(titles))
-    for c in cards:
-        assert c["title"] and c["event"] and c["risk"] and c["source_url"]
+def test_fallback_sections_assign_types_and_limits():
+    items = []
+    for t, kw in TYPE_KEYWORDS.items():
+        for i in range(8):
+            items.append(_item(f"类型{t}标题{i}", " ".join(kw[:4]), f"http://x/{t}/{i}"))
+    sections = fallback_sections(items)
+    assert [s["type"] for s in sections] == TYPES
+    for s in sections:
+        assert 0 < len(s["opportunities"]) <= 2
+        assert 0 <= len(s["related"]) <= 3
+        for o in s["opportunities"]:
+            assert o["target"] and o["entry_exit"] and o["position_hint"] and o["risk"]
+        for r in s["related"]:
+            assert r["title"] and r["why_possible"]
 
 
-def test_validate_cards_clamps_and_filters():
-    data = {"cards": [
-        {"title": "有效卡片1", "event": "e", "impact": "i", "watch_points": "w", "risk": "r", "source_url": "u", "market": "A股"},
-        {"title": "", "event": "空标题应被剔除"},
-    ] + [{"title": f"卡片{n}", "event": "e", "impact": "i", "watch_points": "w", "risk": "r", "source_url": "u", "market": "A股"} for n in range(20)]}
-    cards = validate_cards(data)
-    assert len(cards) <= 10
-    assert all(c["title"] for c in cards)
-    assert all(c["risk"] for c in cards)
+def test_validate_result_fills_all_types_and_clamps():
+    data = {
+        "market_position": [{"asset": "A股", "position": "周期低位区", "note": "估值分位偏低"}],
+        "market_overview": [{"market": "A股", "summary": "缩量整理"}],
+        "sections": [
+            {"type": 1, "opportunities": [{"target": f"标的{i}", "logic": "l", "entry_exit": "e",
+                                           "position_hint": "p", "risk": "r", "source_url": "u"} for i in range(6)],
+             "related": [{"title": f"线索{i}", "summary": "s", "why_possible": "w", "source_url": "u"} for i in range(6)]},
+            {"type": 2, "opportunities": [], "related": []},
+            {"type": 3, "opportunities": [], "related": []},
+        ],
+    }
+    sections, mp, ov = validate_result(data)
+    assert [s["type"] for s in sections] == TYPES
+    assert len(sections[0]["opportunities"]) == 4  # 上限 4
+    assert len(sections[0]["related"]) == 4
+    assert sections[1]["opportunities"] == [] and sections[3]["related"] == []
+    assert mp[0]["asset"] == "A股" and ov[0]["market"] == "A股"
 
 
 def test_run_without_key_falls_back():
-    items = [_item("公司中标大单 财报预增", "订单饱满 扩产", "http://x/1")] * 3
-    cards, overview = run(items, api_key="")
-    assert len(cards) >= 1
-    assert overview == []
+    items = [_item("A股 估值 周期 ETF", "市盈率处于历史低位", "http://x/1")] * 3
+    sections, mp, ov = run(items, api_key="")
+    assert any(s["opportunities"] or s["related"] for s in sections)
+    assert mp == [] and ov == []
