@@ -1,10 +1,16 @@
 # 📈 每日财经简报（Daily Finance Report）
 
-每天北京时间 9:00 自动采集全网财经信息 → AI 筛选投资机会 → 生成简报 → 邮件推送（可选叠加微信 Server酱）。
+每天北京时间 9:00 自动采集全网财经信息 → 用真实行情数据计算市场位置 → AI 按你的四大交易系统筛选机会 → 生成简报 → 邮件推送（可选叠加微信 Server酱）。
 
 ## 功能
+- **真实行情打底**：`market_stats.py` 调腾讯/新浪 K 线接口，自动计算沪深300、上证50、中证500、恒指、标普、纳指、道指、黄金ETF(518880) 的近1年/3年价格分位与位置判断（<30% 低位区 / >70% 高位区 / 黄金「震荡结构底部」双条件）。**位置判断由代码按真实数据生成，AI 不编造点位。**
 - **数据源**：新浪财经、东方财富全球快讯、CNBC、Google News、Yahoo Finance（单源失败自动跳过）
-- **AI 筛选**：DeepSeek 从 200-500 条新闻中筛出 5-10 张「机会卡片」+ 三大市场概览；未配置 key 时自动降级为关键词规则
+- **AI 筛选**：DeepSeek 按四大交易系统分类整理机会与线索，并校验「机会链接标题必须含标的关键词」，不匹配自动降级为相关线索；未配置 key 时自动降级为规则版
+- **四大系统分类报告**：
+  - 🔴 系统1 · 周期循环（A股大型指数 · 月线级牛熊，数据门控：高位区不报机会）
+  - 🔵 系统2 · 大结构震荡底部反转（关键指数/黄金）
+  - 🟢 系统3 · 前沿新技术早期侦察（固定五市场跟踪池：加密货币/区块链、人工智能、芯片算力、具身智能/人形机器人、航天航空，每个市场给出具体可交易标的与代码）
+  - 🟣 系统4 · 上游垄断 · 紫苏叶理论（五条硬条件：新技术产业/必需/垄断/原材料低价/市场未热；已成熟被炒作的产业链如光伏多晶硅、AI覆铜板CCL 明确剔除）
 - **推送**：SMTP 邮件（必选）+ Server酱 微信（可选双通道）
 - **调度**：GitHub Actions 免费运行，`cron: "0 1 * * *"`（UTC）= 北京 9:00，支持手动触发
 
@@ -57,8 +63,8 @@ python scripts/check_env.py
 ```bash
 pip install -r requirements-dev.txt
 
-# 只生成报告不发送（输出到 output/）
-python main.py --dry-run
+# 只生成报告不发送（输出到 output/，需联网拉取实时行情）
+DEEPSEEK_API_KEY=sk-xxx python main.py --no-push
 
 # 真实发送（需先配置环境变量）
 SMTP_HOST=smtp.qq.com SMTP_USER=xx@qq.com SMTP_PASS=授权码 MAIL_TO=xx@qq.com \
@@ -72,14 +78,16 @@ pytest -q
 
 ## 目录结构
 ```
-main.py               编排入口（采集→筛选→组装→推送）
-collectors/           5 个数据源 + 行情
-ai_filter.py          DeepSeek 筛选（含规则降级）
-report.py             HTML/Markdown 简报组装
+main.py               编排入口（行情统计→采集→AI筛选→组装→推送）
+collectors/           5 个数据源 + 实时行情
+market_stats.py       历史K线分位计算（位置判断的数据来源）
+trading_systems.py    四大交易系统的说明与默认跟踪池
+ai_filter.py          DeepSeek 筛选（含规则降级 + 来源匹配校验）
+report.py             HTML/Markdown 简报组装（四大系统分类 UI）
 push.py               SMTP 邮件 + Server酱
 .github/workflows/    每日定时任务
 tests/                单元测试（离线 fixture）
 ```
 
 ## 免责声明
-本工具自动采集公开网络信息并经 AI 整理，仅供信息参考，**不构成任何投资建议**。投资有风险，决策需谨慎。
+本工具自动采集公开网络信息并经 AI 按个人交易系统整理，仅供信息参考，**不构成任何投资建议**。投资有风险，决策需谨慎。

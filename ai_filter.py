@@ -1,62 +1,73 @@
-"""用 DeepSeek 按用户的四大投资框架整理机会；无 key 或失败时降级为关键词规则。"""
+"""用 DeepSeek 按四大交易系统（校正版）整理机会与线索；无 key 或失败时降级为关键词规则。
+
+市场位置判断由 market_stats 的真实分位数据生成，AI 只补解读、禁止编造点位。
+"""
 import json
 import logging
+import re
 
 import requests
+
+import market_stats
+from trading_systems import PROMPT_FRAMEWORK, SYSTEM3_WATCHLIST, SYSTEM4_RULES
 
 log = logging.getLogger("daily-report")
 
 DEEPSEEK_URL = "https://api.deepseek.com/chat/completions"
 MODEL = "deepseek-chat"
 
-FRAMEWORK = (
-    "1. 周期循环（仅A股为主）：年级别牛熊周期，低位分批建仓、高位离场，如宽基ETF；\n"
-    "2. 大结构震荡底部反转：关键指数或黄金等，在震荡边界做顺大趋势的反转，长线；\n"
-    "3. 新兴产业：AI、太空、生物医药、比特币等新赛道，有商业想象力且位置不高时及时入场；\n"
-    "4. 上游垄断（紫苏叶理论）：新兴产业崛起中寻找上游必须零部件的垄断厂商。"
+ALLOWED_PLATFORMS = ("A股", "港股", "美股", "中国期货", "加密货币")
+
+_WATCHLIST_PROMPT = "\n".join(
+    f"  {i}. {w['market']}：{w['targets']}" for i, w in enumerate(SYSTEM3_WATCHLIST, 1)
 )
 
-SYSTEM_PROMPT = f"""你是专业的财经信息分析师。给定今日财经新闻，按用户的投资框架整理投资机会。
+SYSTEM_PROMPT = f"""你是专业的财经信息分析师。给定今日财经新闻 + 实时数据事实，按用户的四大交易系统整理投资机会与线索。
 
-用户的四大投资框架：
-{FRAMEWORK}
+用户的四大交易系统（校正版）：
+{PROMPT_FRAMEWORK}
 
 只输出合法 JSON，不要输出任何其他文字。JSON 结构：
-{{"market_position": [{{"asset": "A股/美股/港股/黄金", "position": "周期低位区/周期高位区/震荡结构底部/震荡结构顶部/趋势中/暂无明确判断", "note": "一句话说明"}}],
-"market_overview": [{{"market": "A股/港股/美股", "summary": "一句话行情解读"}}],
+{{"market_position": [{{"asset": "A股/港股/美股/黄金", "judgment": "通俗易懂的一句话研判（必须引用数据事实中的真实点位/分位）"}}],
 "sections": [
-  {{"type": 1, "opportunities": [{{"target": "具体标的或方向", "logic": "为什么符合该框架", "entry_exit": "进出场思路", "position_hint": "仓位管理建议", "risk": "风险提示", "source_url": "来源链接"}}], "related": [{{"title": "标题", "summary": "一句话", "why_possible": "为什么可能相关（可能性而非明确机会）", "source_url": "来源链接"}}]}},
+  {{"type": 1, "opportunities": [{{"target": "具体资产名称", "code": "代码", "platform": "A股/港股/美股/中国期货/加密货币", "industry": "所属新技术产业（系统4必填，其余可空）", "material_role": "原材料如何参与产业链、是否必需（系统4必填）", "monopoly": "垄断度（系统4必填，如：全球市占率约X%的寡头）", "moat": "护城河与可替换性（系统4必填）", "logic": "为什么符合该系统", "entry_exit": "具体进出场方案（价位/信号）", "position_hint": "仓位使用建议", "target_return": "预期离场收益率", "stop_loss": "止损收益率", "risk": "风险提示", "source_url": "来源链接"}}], "related": [{{"title": "标题", "summary": "一句话", "why_possible": "为什么可能相关", "source_url": "来源链接"}}]}},
   {{"type": 2, "opportunities": [], "related": []}},
   {{"type": 3, "opportunities": [], "related": []}},
   {{"type": 4, "opportunities": [], "related": []}}
 ]}}
 
-要求：
-1. opportunities 只放明确、可操作的机会，宁缺毋滥，每条都要给出进出场与仓位思路；
-2. related 放相关但非明确机会的信息或线索（政策动向、行业数据、公司动态、潜在可能）；
-3. 四个大类都必须出现，没有内容就留空数组，不要硬凑；
-4. source_url 必须使用提供的原文链接；
-5. 长线视角，避开短线量化噪音，不构成投资建议。"""
+硬性要求：
+0. 数据约束（最高优先级）：位置判断（周期低位区/高位区/震荡结构底部等）已由真实行情分位在代码中计算并随输入给出，你不得修改位置结论，不得编造任何点位、估值、涨跌幅；研判/进出场数字只能引用数据事实中的真实价格推算。
+1. 系统1：只给A股大型指数（沪深300/上证50，含其ETF/期货），必须是「月线级牛熊周期」的相对底部机会，严禁日线级别或个股。若数据事实显示A股处于「周期高位区」或「区间中位」，系统1的 opportunities 必须为空数组，可放政策/情绪类 related；
+2. 系统2：关键指数/黄金的大结构震荡底部反转，顺大趋势，给出明确价位与止损；优先检查黄金ETF（518880，数据事实中位置为「震荡结构底部」才给机会；高位/趋势不明则 opportunities 为空）；
+3. 系统3：固定跟踪五市场——{_WATCHLIST_PROMPT}。只识别「市场尚未形成、技术刚出现」的重大突破（如比特币初现、ChatGPT发布、首个具身智能人形机器人、早期SpaceX），这是1年以上的长期布局；严禁把成熟产业的日线事件当机会（只能放 related）；给出具体可交易载体与代码，尚无载体则 code 填「先跟踪」；
+4. 系统4（紫苏叶理论）硬条件五条缺一不可：{SYSTEM4_RULES}。逐项标注 industry/material_role/monopoly/moat，并说明原材料价格处于低位、市场未被炒作；违反任一条的（如光伏多晶硅、AI服务器覆铜板CCL）一律不得作为机会；
+5. 标的市场只允许五类：A股、港股、美股、中国期货、加密货币；海外期货（CME商品）、外汇、CFD 等剔除；
+6. 每条机会必须给出具体进出场方案、仓位、预期离场收益率、止损收益率；target_return/stop_loss 只填数值或百分比（如"+30%"、"-10%"）；
+7. source_url 必须使用提供的原文链接且与标的高度相关（标题需提及该标的或其所属领域）；禁止引用无关宏观文章；
+8. market_position 只输出 A股/港股/美股/黄金 四条的 judgment，位置由代码给出、不要重复输出 position 字段；
+9. related 每类最多3条，opportunities 每类最多3条，宁缺毋滥；四类 sections 必须全部出现，无内容留空数组。"""
 
 TYPES = [1, 2, 3, 4]
 
 FALLBACK_ENTRY_EXIT = {
-    1: "分批定投/等待周期底部信号（估值分位、政策底）建仓，牛市中后期情绪过热时分批离场",
-    2: "在震荡边界确认企稳后轻仓试反转，严格跟随大趋势，破位即止损",
-    3: "早期小额试探建仓，跟踪商业化进展与资金流入，趋势确认后再加仓",
-    4: "关注上游垄断厂商的订单与产能释放节奏，逢调整分批布局",
+    1: "月线级周期相对底部：估值分位<30%时分4-6批建仓，估值分位>80%/情绪过热时离场",
+    2: "震荡下沿企稳轻仓进场，上沿分批止盈，有效跌破下沿3-5%止损",
+    3: "市场未形成先跟踪，出现可交易载体后首仓≤5%试错，验证后加至10-15%，持有1年以上",
+    4: "随下游订单落地分3-4批建仓，下游资本开支见顶/供需反转时离场",
 }
 FALLBACK_POSITION = {
-    1: "作为组合底仓配置，单标的建议不超过总仓位 20%，长线持有",
-    2: "试探性仓位，建议不超过 10%，严格止损",
-    3: "单一新赛道建议不超过 10%，分批参与，控制回撤",
-    4: "作为组合的进攻仓，建议 15% 以内",
+    1: "组合底仓，单一标的≤20-30%总资产，不用杠杆",
+    2: "试探仓，单笔≤10-15%总资产，单笔亏损控制在2-3%",
+    3: "单一赛道≤15%，首仓5%试错，长期持有",
+    4: "进攻仓，单一标的10-15%",
 }
+FALLBACK_PLATFORM = {1: "A股", 2: "黄金/中国期货", 3: "加密货币", 4: "A股"}
 TYPE_KEYWORDS = {
-    1: ["ETF", "指数", "牛市", "熊市", "估值", "市盈率", "A股", "上证", "沪深", "大盘", "政策底", "市场底", "降息", "放水", "周期"],
+    1: ["沪深300", "上证50", "中证", "ETF", "牛市", "熊市", "估值", "市盈率", "A股", "上证", "大盘", "政策底", "市场底", "降息", "周期"],
     2: ["黄金", "金价", "反转", "底部", "震荡", "支撑", "压力", "贵金属", "关键指数"],
-    3: ["AI", "人工智能", "大模型", "机器人", "比特币", "加密", "太空", "航天", "生物医药", "创新药", "新赛道", "云计算"],
-    4: ["上游", "零部件", "垄断", "供应链", "订单", "晶圆", "设备", "材料", "涨价", "扩产", "中标", "供不应求", "国产替代"],
+    3: ["比特币", "区块链", "人工智能", "大模型", "ChatGPT", "人形机器人", "具身智能", "量子计算", "生物科技", "脑机接口", "太空", "航天", "SpaceX", "新技术", "突破"],
+    4: ["上游", "零部件", "垄断", "供应链", "订单", "晶圆", "设备", "材料", "涨价", "扩产", "中标", "供不应求", "国产替代", "光模块", "PCB", "铜缆"],
 }
 
 
@@ -72,12 +83,13 @@ def format_items(items: list) -> str:
     return "\n".join(lines)
 
 
-def call_deepseek(items: list, api_key: str) -> dict:
+def call_deepseek(items: list, api_key: str, facts: str = "") -> dict:
+    user_content = (facts + "\n\n" if facts else "") + format_items(items)
     payload = {
         "model": MODEL,
         "messages": [
             {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": format_items(items)},
+            {"role": "user", "content": user_content},
         ],
         "response_format": {"type": "json_object"},
         "temperature": 0.3,
@@ -94,11 +106,28 @@ def call_deepseek(items: list, api_key: str) -> dict:
 
 
 def _clean_opp(o: dict) -> dict:
+    def _no_prefix(v: str, prefixes: tuple) -> str:
+        v = str(v or "")
+        for pr in prefixes:
+            v = v.replace(pr, "")
+        return v.strip()
+
+    def _clean_ret(v: str) -> str:
+        return _no_prefix(v, ("预期离场收益率", "止损收益率", "预期收益", "目标收益"))
+
     return {
-        "target": str(o.get("target", ""))[:80],
+        "target": str(o.get("target", ""))[:60],
+        "code": str(o.get("code", ""))[:30],
+        "platform": str(o.get("platform", ""))[:20],
+        "industry": str(o.get("industry", ""))[:80],
+        "material_role": str(o.get("material_role", ""))[:120],
+        "monopoly": str(o.get("monopoly", ""))[:80],
+        "moat": str(o.get("moat", ""))[:120],
         "logic": str(o.get("logic", ""))[:120],
-        "entry_exit": str(o.get("entry_exit", ""))[:160],
+        "entry_exit": str(o.get("entry_exit", ""))[:180],
         "position_hint": str(o.get("position_hint", ""))[:120],
+        "target_return": _clean_ret(o.get("target_return", ""))[:60],
+        "stop_loss": _clean_ret(o.get("stop_loss", ""))[:60],
         "risk": str(o.get("risk", ""))[:120],
         "source_url": str(o.get("source_url", "")),
     }
@@ -113,29 +142,98 @@ def _clean_rel(r: dict) -> dict:
     }
 
 
-def validate_result(data: dict):
+def _target_base(target: str) -> str:
+    return re.split(r"[（(]", str(target or ""))[0].strip()
+
+
+def _source_check(o: dict, url_to_title: dict):
+    """校验机会的来源链接与标的是否匹配；返回 (保留 or None, 降级原因)。"""
+    url = str(o.get("source_url", "")).strip()
+    if not url:
+        return None, "缺少来源链接，无法核实，降级为线索"
+    title = url_to_title.get(url, "")
+    if not title:
+        return None, "来源链接不在当日采集列表中（疑似编造），无法核实，降级为线索"
+    base = _target_base(o.get("target"))
+    code = str(o.get("code", ""))
+    if (base and base in title) or (len(code) >= 3 and code in title) or (len(base) >= 3 and base[:3] in title):
+        return o, None
+    return None, f"来源标题未提及标的『{base}』，结论与来源不匹配，降级为线索"
+
+
+def _downgrade_to_related(o: dict, reason: str) -> dict:
+    return {
+        "title": f"【来源待核实】{o.get('target', '')}",
+        "summary": str(o.get("logic", ""))[:100],
+        "why_possible": reason,
+        "source_url": str(o.get("source_url", "")),
+    }
+
+
+def validate_result(data: dict, items: list = None, code_positions: list = None):
+    """返回 (sections, market_position)。code_positions 为代码按真实分位生成的研判。"""
+    url_to_title = {str(it.get("url", "")): str(it.get("title", "")) for it in (items or [])}
     secs_raw = {s.get("type"): s for s in (data.get("sections") or []) if isinstance(s, dict)}
     sections = []
     for t in TYPES:
         s = secs_raw.get(t, {})
         opps = [_clean_opp(o) for o in (s.get("opportunities") or []) if isinstance(o, dict) and o.get("target")]
         rels = [_clean_rel(r) for r in (s.get("related") or []) if isinstance(r, dict) and r.get("title")]
-        sections.append({"type": t, "opportunities": opps[:4], "related": rels[:4]})
-    market_position = [
-        {"asset": str(m.get("asset", ""))[:10], "position": str(m.get("position", ""))[:14], "note": str(m.get("note", ""))[:60]}
-        for m in (data.get("market_position") or [])
-        if isinstance(m, dict) and m.get("asset")
-    ][:4]
-    market_overview = [
-        {"market": str(o.get("market", ""))[:10], "summary": str(o.get("summary", ""))[:80]}
-        for o in (data.get("market_overview") or [])
-        if isinstance(o, dict) and o.get("market")
-    ][:3]
-    return sections, market_position, market_overview
+        if items:
+            kept, downgraded = [], []
+            for o in opps:
+                keep, reason = _source_check(o, url_to_title)
+                if keep:
+                    kept.append(o)
+                else:
+                    downgraded.append(_downgrade_to_related(o, reason))
+            opps = kept
+            rels = (downgraded + rels)[:3]
+        sections.append({"type": t, "opportunities": opps[:3], "related": rels[:3]})
+
+    mp = []
+    if code_positions:
+        ai_map = {m.get("asset"): m for m in (data.get("market_position") or []) if isinstance(m, dict)}
+        for cp in code_positions:
+            ai = ai_map.get(cp["asset"], {})
+            mp.append({
+                "asset": cp["asset"],
+                "position": cp["position"],
+                "judgment": str(ai.get("judgment") or cp.get("judgment", ""))[:80],
+            })
+    else:
+        seen_assets = set()
+        for m in (data.get("market_position") or []):
+            if not isinstance(m, dict) or not m.get("asset"):
+                continue
+            asset = str(m.get("asset", ""))[:10]
+            if asset in seen_assets:
+                continue
+            seen_assets.add(asset)
+            mp.append({
+                "asset": asset,
+                "position": str(m.get("position", ""))[:14],
+                "judgment": str(m.get("judgment", ""))[:80],
+            })
+            if len(mp) >= 4:
+                break
+    return sections, mp
 
 
-def fallback_sections(items: list) -> list:
+def _data_gate(market_position: list) -> set:
+    """依据真实分位位置，禁止在错误的位置给出对应系统的明确机会。"""
+    gate = {m["asset"]: m["position"] for m in (market_position or [])}
+    suppressed = set()
+    if gate.get("A股") in ("周期高位区", "区间中位"):
+        suppressed.add(1)
+    if gate.get("黄金") in ("周期高位区", "震荡结构顶部"):
+        suppressed.add(2)
+    return suppressed
+
+
+def fallback_sections(items: list, market_position: list = None) -> list:
     sections = []
+    suppressed = _data_gate(market_position)
     for t in TYPES:
         scored = sorted(items, key=lambda it: score_type(it, t), reverse=True)
         opps, rels, seen = [], [], set()
@@ -145,12 +243,17 @@ def fallback_sections(items: list) -> list:
                 continue
             seen.add(title)
             s = score_type(it, t)
-            if len(opps) < 2 and s >= 2:
+            if t not in suppressed and len(opps) < 2 and s >= 2:
                 opps.append({
-                    "target": title[:60],
+                    "target": title[:50],
+                    "code": "需人工确认",
+                    "platform": FALLBACK_PLATFORM[t],
+                    "industry": "", "material_role": "", "monopoly": "", "moat": "",
                     "logic": (it.get("summary") or title)[:80],
                     "entry_exit": FALLBACK_ENTRY_EXIT[t],
                     "position_hint": FALLBACK_POSITION[t],
+                    "target_return": "以系统规则为准",
+                    "stop_loss": "以系统规则为准",
                     "risk": "信息来自公开网络，需自行核实；市场有波动风险，不构成投资建议。",
                     "source_url": it.get("url", ""),
                 })
@@ -158,7 +261,7 @@ def fallback_sections(items: list) -> list:
                 rels.append({
                     "title": title[:60],
                     "summary": (it.get("summary") or "")[:100],
-                    "why_possible": "与对应框架相关，可能是机会的线索，建议持续跟踪确认。",
+                    "why_possible": "与对应交易系统相关，可能是机会的线索，建议持续跟踪确认。",
                     "source_url": it.get("url", ""),
                 })
             if len(opps) >= 2 and len(rels) >= 3:
@@ -167,18 +270,22 @@ def fallback_sections(items: list) -> list:
     return sections
 
 
-def run(items: list, api_key: str):
-    """返回 (sections, market_position, market_overview)。AI 不可用时降级为规则分类。"""
+def run(items: list, api_key: str, stats: list = None):
+    """返回 (sections, market_position)。位置研判由真实分位数据生成，AI 不可用时降级。"""
+    code_positions = market_stats.build_market_position(stats) if stats else []
     if api_key:
         try:
-            data = call_deepseek(items, api_key)
-            sections, mp, ov = validate_result(data)
+            facts = market_stats.facts_text(stats) if stats else ""
+            data = call_deepseek(items, api_key, facts)
+            sections, mp = validate_result(data, items, code_positions)
             if any(s["opportunities"] or s["related"] for s in sections):
-                log.info("DeepSeek 整理成功：%s", {s["type"]: len(s["opportunities"]) + len(s["related"]) for s in sections})
-                return sections, mp, ov
+                log.info("DeepSeek 整理成功：机会 %s / 线索 %s",
+                         {s["type"]: len(s["opportunities"]) for s in sections},
+                         {s["type"]: len(s["related"]) for s in sections})
+                return sections, mp
             log.warning("DeepSeek 返回内容为空，降级为规则分类")
         except Exception as exc:
             log.warning("DeepSeek 调用失败，降级为规则分类: %s", exc)
     else:
         log.info("未配置 DEEPSEEK_API_KEY，使用关键词规则分类")
-    return fallback_sections(items), [], []
+    return fallback_sections(items, code_positions), code_positions

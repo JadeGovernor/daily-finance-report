@@ -8,6 +8,7 @@ from pathlib import Path
 
 from collectors import SOURCES, fetch_market
 import ai_filter
+import market_stats
 import push
 import report
 
@@ -78,13 +79,20 @@ def main():
     except Exception as exc:
         log.warning("行情获取失败: %s", exc)
 
+    stats = []
+    try:
+        stats = market_stats.fetch()
+        log.info("历史分位统计: %d 个标的", len(stats))
+    except Exception as exc:
+        log.warning("历史分位统计失败: %s", exc)
+
     api_key = os.environ.get("DEEPSEEK_API_KEY", "")
-    sections, market_position, market_overview = ai_filter.run(items, api_key)
+    sections, market_position = ai_filter.run(items, api_key, stats)
     log.info("四大类整理完成：机会 %d 条 / 线索 %d 条",
              sum(len(s["opportunities"]) for s in sections),
              sum(len(s["related"]) for s in sections))
 
-    html_body, md_body = report.build_report(report_date, quotes, market_position, market_overview, sections)
+    html_body, md_body = report.build_report(report_date, quotes, market_position, sections, stats)
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / "report.html").write_text(html_body, encoding="utf-8")
     (output_dir / "report.md").write_text(md_body, encoding="utf-8")

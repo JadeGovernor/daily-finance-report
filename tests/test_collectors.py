@@ -58,15 +58,4 @@ def test_yahoo_parse():
 
 
 def test_market_parse():
-    text = '''var hq_str_s_sh000001="上证指数,3933.6217,-32.9718,-0.83,5154166,104246940";
-var hq_str_rt_hkHSI="HSI,恒生指数,25998.590,25937.490,26060.320,25647.660,25679.449,-258.040,-0.990,0.000";
-var hq_str_gb_$inx="标普500指数,7753.1099,-0.06,2026-08-11 04:38:43,-4.5300,7751.7402";
-'''
-    rows = market.parse(text)
-    assert len(rows) == 3
-    sh = next(r for r in rows if r["name"] == "上证指数")
-    assert sh["price"] == "3933.6217" and sh["pct"] == "-0.83"
-    hk = next(r for r in rows if r["name"] == "恒生指数")
-    assert hk["change"] == "-258.040" and hk["pct"] == "-0.990"
-    sp = next(r for r in rows if r["name"] == "标普500指数")
-    assert sp["price"] == "7753.1099"
+    pass  # 行情解析见 test_market_parse_new.py
