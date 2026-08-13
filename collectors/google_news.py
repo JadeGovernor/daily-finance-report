@@ -24,6 +24,16 @@ def parse(entries: list, limit: int = 50) -> list:
     return items
 
 
+def search(query: str, limit: int = 20, hl: str = "zh-CN", gl: str = "CN", ceid: str = "CN:zh-Hans") -> list:
+    """按关键词搜索 Google News（供新板块采集器复用；本地网络可能超时，失败由上层跳过）。"""
+    import requests
+    import feedparser
+    session = requests.Session()
+    url = f"{BASE_URL}?q={quote(query)}&hl={hl}&gl={gl}&ceid={ceid}"
+    resp = session.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+    resp.raise_for_status()
+    return parse(feedparser.parse(resp.content).entries, limit)
+
 def fetch(session=None, limit: int = 50) -> list:
     session = session or requests.Session()
     url = f"{BASE_URL}?q={quote(QUERY)}&hl=zh-CN&gl=CN&ceid=CN:zh-Hans"

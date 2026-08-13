@@ -7,6 +7,7 @@ from datetime import date
 from pathlib import Path
 
 from collectors import SOURCES, fetch_market
+from collectors import pm_topics, ai_news, passive_income
 import ai_filter
 import market_stats
 import push
@@ -35,6 +36,24 @@ def collect(limit_per_source: int):
         seen.add(key)
         uniq.append(it)
     log.info("去重后共 %d 条，失败源: %s", len(uniq), ", ".join(failed) or "无")
+    return uniq
+
+
+def collect_block(name: str, fetch_fn, limit: int) -> list:
+    """采集单个新板块（内部已多源容错），统一去重。"""
+    try:
+        got = fetch_fn(limit=limit)
+        log.info("采集 %s: %d 条", name, len(got))
+    except Exception as exc:
+        log.warning("采集 %s 失败: %s", name, exc)
+        return []
+    seen, uniq = set(), []
+    for it in got:
+        key = it.get("url") or it.get("title")
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        uniq.append(it)
     return uniq
 
 
@@ -92,7 +111,28 @@ def main():
              sum(len(s["opportunities"]) for s in sections),
              sum(len(s["related"]) for s in sections))
 
-    html_body, md_body = report.build_report(report_date, quotes, market_position, sections, stats)
+    # ---- 三个新板块（财经链路完全不变）----
+    pm_items = collect_block("pm_topics", pm_topics.fetch, args.limit)
+    ai_items = collect_block("ai_news", ai_news.fetch, args.limit)
+    passive_items = collect_block("passive_income", passive_income.fetch, args.limit)
+    pm_data = ai_filter.filter_pm_topics(pm_items, api_key)
+    ai_data = ai_filter.filter_ai_news(ai_items, api_key)
+    passive_data = ai_filter.filter_passive_income(passive_items, api_key)
+    log.info("新板块整理完成：话题 %d 条 / AI突破 %d 条 / 被动收入 %d 条",
+             len(pm_data.get("items", [])) if isinstance(pm_data, dict) else len(pm_data), len(ai_data), len(passive_data))
+
+    extra_blocks = [
+        {"html": report.build_extra_block_html("pm", pm_data), "md": report.build_extra_block_md("pm", pm_data)},
+        {"html": report.build_extra_block_html("ai", ai_data), "md": report.build_extra_block_md("ai", ai_data)},
+        {"html": report.build_extra_block_html("passive", passive_data), "md": report.build_extra_block_md("passive", passive_data)},
+    ]
+
+    html_body, md_body = report.build_report(
+        report_date, quotes, market_position, sections, stats,
+        extra_blocks=extra_blocks,
+        title="📬 每日信息简报",
+        subtitle="财经 · 产品经理话题 · AI 突破 · 被动收入（每日聚合）",
+    )
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / "report.html").write_text(html_body, encoding="utf-8")
     (output_dir / "report.md").write_text(md_body, encoding="utf-8")
@@ -102,7 +142,7 @@ def main():
         log.info("--no-push：跳过推送（可用浏览器打开 output/report.html 预览）")
         return 0
 
-    subject = f"📈 每日财经简报 {report_date:%Y-%m-%d}"
+    subject = f"📬 每日信息简报 {report_date:%Y-%m-%d}"
     try:
         push.send_email(subject, html_body)
         log.info("邮件已发送")

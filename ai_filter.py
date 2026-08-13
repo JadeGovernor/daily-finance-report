@@ -289,3 +289,301 @@ def run(items: list, api_key: str, stats: list = None):
     else:
         log.info("未配置 DEEPSEEK_API_KEY，使用关键词规则分类")
     return fallback_sections(items, code_positions), code_positions
+
+
+# ============================================================
+# 板块二：产品经理热门话题（论坛/社区动态）
+# ============================================================
+PM_TOPICS_SYSTEM_PROMPT = """你是互联网产品经理行业的趋势观察员。给定最近从社区论坛（人人都是产品经理、牛客网等）与新闻采集到的产品经理相关热门讨论，分析行业趋势与大厂动态。
+
+只输出合法 JSON，不要输出任何其他文字。JSON 结构：
+{"trend_summary": "一句话总结今日产品经理行业趋势/热门方向", "items": [{"topic": "热门话题标题", "heat": "为什么火/热度体现在哪（1-2句）", "trend": "反映的行业趋势或方向（1-2句）", "company": "关联大厂（腾讯/美团/字节/阿里/其他，无则空）", "business": "关联业务或岗位方向（如：AI应用、商业化、本地生活）", "url": "来源链接"}]}
+
+硬性要求：
+1. 主题是「热门讨论与行业趋势」，不是招聘岗位；纯招聘JD类内容剔除；
+2. 优先覆盖腾讯/美团/字节/阿里四家产品经理的最新动态：哪个方向火、哪个业务最近做得好；
+3. items 最多 10 条，按热度排序；宁缺毋滥，无内容可少于 10 条甚至为空；items 中每个 url 只能出现一次（同一篇聚合日报拆出的多条新闻只保留最火的一条，其余丢弃），禁止多条话题共用同一个 url；
+4. url 必须来自给定列表中，禁止编造链接；
+5. 全部用中文输出。"""
+
+_PM_TOPIC_KEYWORDS = ("产品经理", "产品运营", "产品设计", "产品", "需求", "用户增长", "商业化",
+                      "AIGC", "大模型", "AI", "校招", "社招", "offer", "简历", "面试", "大厂",
+                      "腾讯", "美团", "字节", "阿里")
+
+
+def _clean_pm_topic_item(it: dict) -> dict:
+    return {
+        "topic": str(it.get("topic") or "")[:80],
+        "heat": str(it.get("heat") or "")[:150],
+        "trend": str(it.get("trend") or "")[:150],
+        "company": str(it.get("company") or "")[:20],
+        "business": str(it.get("business") or "")[:60],
+        "url": str(it.get("url") or ""),
+    }
+
+
+_SRC_PREFIXES = ("[腾讯] ", "[人人都是产品经理] ", "[牛客网] ", "[新闻] ")
+
+
+def fallback_pm_topics(items: list) -> dict:
+    def score(it):
+        text = str(it.get("title", "")) + " " + str(it.get("summary", ""))
+        for prefix in _SRC_PREFIXES:
+            text = text.replace(prefix, "")
+        return sum(1 for k in _PM_TOPIC_KEYWORDS if k in text)
+    out, seen = [], set()
+    for it in sorted(items, key=score, reverse=True):
+        title = (it.get("title") or "").strip()
+        if not title or title in seen or score(it) < 2:
+            continue
+        seen.add(title)
+        company = str(it.get("company") or "")
+        if not company:
+            for c in ("腾讯", "美团", "字节", "阿里", "京东", "百度"):
+                if c in title:
+                    company = c
+                    break
+        topic_text = title
+        for prefix in _SRC_PREFIXES:
+            topic_text = topic_text.replace(prefix, "")
+        out.append(_clean_pm_topic_item({
+            "topic": topic_text,
+            "heat": "来自社区/新闻的高热度讨论，具体热度与讨论量见原文。",
+            "trend": "规则版暂未深度分析，建议点开原文查看讨论方向。",
+            "company": company,
+            "business": "",
+            "url": it.get("url", ""),
+        }))
+        if len(out) >= 10:
+            break
+    summary = "今日产品经理相关热门讨论见下（规则版未做深度趋势总结，配置 DeepSeek key 后自动升级）。" if out else ""
+    return {"trend_summary": summary, "items": out}
+
+
+def filter_pm_topics(items: list, api_key: str) -> dict:
+    """返回 {'trend_summary', 'items'}；无 key/失败时降级为规则版。"""
+    if api_key:
+        try:
+            data = _call_json(PM_TOPICS_SYSTEM_PROMPT, items, api_key)
+            url_ok = {str(it.get("url", "")) for it in items}
+            out, seen_urls = [], set()
+            for it in (data.get("items") or []):
+                if not isinstance(it, dict) or not it.get("topic"):
+                    continue
+                if it.get("url") and str(it.get("url")) not in url_ok:
+                    it = dict(it, url="", trend=str(it.get("trend", "")) + "（来源链接未核实）")
+                url = str(it.get("url") or "")
+                if url and url in seen_urls:
+                    continue
+                seen_urls.add(url)
+                out.append(_clean_pm_topic_item(it))
+            if out:
+                log.info("DeepSeek 产品经理话题整理成功：%d 条", len(out))
+                return {"trend_summary": str(data.get("trend_summary") or ""), "items": out[:10]}
+            log.warning("DeepSeek 产品经理话题输出为空，降级为规则")
+        except Exception as exc:
+            log.warning("DeepSeek 产品经理话题调用失败，降级为规则: %s", exc)
+    return fallback_pm_topics(items)
+
+
+# ============================================================
+# 板块三：AI 最新技术突破（大模型优先 · 六家公司必覆盖）
+# ============================================================
+AI_NEWS_SYSTEM_PROMPT = """你是前沿 AI 技术分析师。给定最近采集的 AI 相关新闻（中英文混合），筛选出「最新的大模型/AI 技术突破」，其余科技新闻只有在 AI 突破没有缺位时才能补位展示。
+
+只输出合法 JSON，不要输出任何其他文字。JSON 结构：
+{"items": [{"title": "中文标题", "company": "发布方（OpenAI / Anthropic / Kimi月之暗面 / DeepSeek / 字节豆包 / Google Gemini / 其他）", "what": "突破/发布是什么（1-2句）", "impact": "为什么重要（1-2句）", "date": "发布日期", "url": "来源链接"}]}
+
+硬性要求：
+1. 只保留有实质技术内容的最新突破：新模型/能力提升、重要产品发布、开源、重要论文、重大技术决策；
+2. 六家公司优先：OpenAI、Anthropic、Kimi（月之暗面）、DeepSeek、字节豆包、Google Gemini——当日信息里出现哪几家，就必须整理进去；其他公司/方向的内容只有在六家信息不缺位时才补充；
+3. items 最多 5 条，按重要性排序；英文内容必须翻译成中文；
+4. 剔除单纯股价、融资、营销软文、无实质内容的传闻；
+5. url 必须来自给定列表中，禁止编造链接；
+6. 宁缺毋滥，没有值得报的可以少于 5 条甚至为空。"""
+
+_AI_FALLBACK_KEYWORDS = ("GPT", "模型", "发布", "开源", "机器人", "具身", "芯片", "Agent", "突破",
+                         "OpenAI", "Anthropic", "Claude", "Gemini", "量子", "DeepMind", "大模型",
+                         "推理", "多模态")
+
+_AI_COMPANY_KEYWORDS = (
+    ("OpenAI", ("openai", "gpt", "chatgpt", "sora")),
+    ("Anthropic", ("anthropic", "claude")),
+    ("Kimi 月之暗面", ("kimi", "月之暗面", "moonshot")),
+    ("DeepSeek", ("deepseek", "深度求索")),
+    ("字节豆包", ("豆包", "doubao", "字节跳动", "字节", "seed")),
+    ("Google Gemini", ("gemini", "google", "deepmind")),
+)
+
+
+def detect_ai_company(text: str) -> str:
+    text = text.lower()
+    for name, kws in _AI_COMPANY_KEYWORDS:
+        if any(k in text for k in kws):
+            return name
+    return ""
+
+
+def _clean_ai_item(it: dict) -> dict:
+    return {
+        "title": str(it.get("title") or "")[:80],
+        "company": str(it.get("company") or "")[:20],
+        "what": str(it.get("what") or "")[:150],
+        "impact": str(it.get("impact") or "")[:150],
+        "date": str(it.get("date") or "")[:20],
+        "url": str(it.get("url") or ""),
+    }
+
+
+def fallback_ai_news(items: list) -> list:
+    def score(it):
+        text = (str(it.get("title", "")) + " " + str(it.get("summary", ""))).lower()
+        return sum(1 for k in _AI_FALLBACK_KEYWORDS if k.lower() in text)
+    out, seen = [], set()
+    for it in sorted(items, key=score, reverse=True):
+        title = (it.get("title") or "").strip()
+        if not title or title in seen or score(it) < 2:
+            continue
+        seen.add(title)
+        out.append(_clean_ai_item({
+            "title": title,
+            "company": detect_ai_company(title + " " + str(it.get("summary", ""))),
+            "what": (it.get("summary") or title)[:150],
+            "impact": "来自科技社区/媒体的重要 AI 动态，建议点开原文核实细节。",
+            "date": it.get("published", ""),
+            "url": it.get("url", ""),
+        }))
+        if len(out) >= 5:
+            break
+    return out
+
+
+def filter_ai_news(items: list, api_key: str) -> list:
+    """返回 AI 突破列表；无 key/失败时降级为关键词规则。"""
+    if api_key:
+        try:
+            data = _call_json(AI_NEWS_SYSTEM_PROMPT, items, api_key)
+            url_ok = {str(it.get("url", "")) for it in items}
+            out = []
+            for it in (data.get("items") or []):
+                if not isinstance(it, dict) or not it.get("what"):
+                    continue
+                if it.get("url") and str(it.get("url")) not in url_ok:
+                    it = dict(it, url="", impact=str(it.get("impact", "")) + "（来源链接未核实）")
+                if not it.get("company"):
+                    it = dict(it, company=detect_ai_company(str(it.get("title", "")) + " " + str(it.get("what", ""))))
+                out.append(_clean_ai_item(it))
+            if out:
+                log.info("DeepSeek AI突破整理成功：%d 条", len(out))
+                return out[:5]
+            log.warning("DeepSeek AI突破输出为空，降级为规则")
+        except Exception as exc:
+            log.warning("DeepSeek AI突破调用失败，降级为规则: %s", exc)
+    return fallback_ai_news(items)
+
+
+# ============================================================
+# 板块四：被动收入方法卡（含市场分析）
+# ============================================================
+PASSIVE_INCOME_SYSTEM_PROMPT = """你是被动收入项目评估顾问。给定最近收集的信息（中英文混合），筛选「能用 AI 全栈能力（AI webcoding）在 1 个月内搭出自动化流程、成本低、运营压力小、只需周末人工维护」的被动收入方法，并重点做市场分析。
+
+只输出合法 JSON，不要输出任何其他文字。JSON 结构：
+{"items": [{"title": "方法名", "demand": "需求是否真实存在且供给不足（1-2句，给出判断依据）", "build": "用 AI 全栈怎么搭（具体可执行步骤）", "tech_feasibility": "AI全栈可实现性评级：高/中/低", "cost": "启动成本", "operation": "运营压力（应低成本低运营，只需周末维护）", "expected_income": "预期收益（客观保守，不夸大）", "monetizable": "可获利性判断（1-2句：变现路径是否清晰）", "risk": "主要风险", "url": "来源链接"}]}
+
+硬性要求：
+1. 宁缺毋滥，最多 3 条；
+2. 必须同时满足：需求真实且缺供给、AI 可全栈实现、成本低、运营压力小（周末维护即可）、变现路径清晰；
+3. 剔除需大量人工时间、需大额初始资金、或明显不靠谱的；
+4. 预期收益必须客观保守，禁止承诺收益；
+5. url 必须来自给定列表中，禁止编造链接；
+6. 英文内容翻译成中文。"""
+
+_PASSIVE_FALLBACK_KEYWORDS = ("passive", "income", "side project", "side-project", "indie", "副业",
+                              "被动收入", "automation", "agent", "subscription", "digital product",
+                              "digital download", "affiliate", "saas", "newsletter")
+
+
+def _clean_passive_item(it: dict) -> dict:
+    return {
+        "title": str(it.get("title") or "")[:60],
+        "demand": str(it.get("demand") or "")[:150],
+        "build": str(it.get("build") or "")[:150],
+        "tech_feasibility": str(it.get("tech_feasibility") or "中")[:4],
+        "cost": str(it.get("cost") or "")[:60],
+        "operation": str(it.get("operation") or "")[:120],
+        "expected_income": str(it.get("expected_income") or "")[:80],
+        "monetizable": str(it.get("monetizable") or "")[:150],
+        "risk": str(it.get("risk") or "")[:100],
+        "url": str(it.get("url") or ""),
+    }
+
+
+def fallback_passive_income(items: list) -> list:
+    def score(it):
+        text = (str(it.get("title", "")) + " " + str(it.get("summary", ""))).lower()
+        return sum(1 for k in _PASSIVE_FALLBACK_KEYWORDS if k.lower() in text)
+    out, seen = [], set()
+    for it in sorted(items, key=score, reverse=True):
+        title = (it.get("title") or "").strip()
+        if not title or title in seen or score(it) < 2:
+            continue
+        seen.add(title)
+        out.append(_clean_passive_item({
+            "title": title,
+            "demand": "待评估：需人工核实目标人群是否真实存在该需求且供给不足。",
+            "build": "需根据原文思路用 AI 全栈搭建，具体方案待评估。",
+            "tech_feasibility": "中",
+            "cost": "待评估",
+            "operation": "待评估（目标：低成本、低运营、周末维护）",
+            "expected_income": "待评估（未经过 AI 深度分析，不承诺收益）",
+            "monetizable": "待评估：需判断变现路径是否清晰。",
+            "risk": "待评估；任何副业都有不确定性，需自行验证。",
+            "url": it.get("url", ""),
+        }))
+        if len(out) >= 3:
+            break
+    return out
+
+
+def filter_passive_income(items: list, api_key: str) -> list:
+    """返回被动收入方法卡；无 key/失败时降级为关键词规则。"""
+    if api_key:
+        try:
+            data = _call_json(PASSIVE_INCOME_SYSTEM_PROMPT, items, api_key)
+            url_ok = {str(it.get("url", "")) for it in items}
+            out = []
+            for it in (data.get("items") or []):
+                if not isinstance(it, dict) or not it.get("title"):
+                    continue
+                if it.get("url") and str(it.get("url")) not in url_ok:
+                    it = dict(it, url="", risk=str(it.get("risk", "")) + "（来源链接未核实）")
+                out.append(_clean_passive_item(it))
+            if out:
+                log.info("DeepSeek 被动收入整理成功：%d 条", len(out))
+                return out[:3]
+            log.warning("DeepSeek 被动收入输出为空，降级为规则")
+        except Exception as exc:
+            log.warning("DeepSeek 被动收入调用失败，降级为规则: %s", exc)
+    return fallback_passive_income(items)
+
+
+def _call_json(system_prompt: str, items: list, api_key: str) -> dict:
+    """通用 DeepSeek JSON 调用（供新板块使用）。"""
+    payload = {
+        "model": MODEL,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": format_items(items)},
+        ],
+        "response_format": {"type": "json_object"},
+        "temperature": 0.3,
+    }
+    resp = requests.post(
+        DEEPSEEK_URL,
+        headers={"Authorization": f"Bearer {api_key}"},
+        json=payload,
+        timeout=120,
+    )
+    resp.raise_for_status()
+    content = resp.json()["choices"][0]["message"]["content"]
+    return json.loads(content)
