@@ -1,7 +1,7 @@
 """AI 筛选与规则降级测试（四大交易系统·校正版）。"""
 from ai_filter import (
     ALLOWED_PLATFORMS, fallback_sections, score_type, validate_result, run,
-    TYPE_KEYWORDS, TYPES,
+    TYPE_KEYWORDS, TYPES, SYSTEM_PROMPT, MATURE_TYPE3_ASSETS,
 )
 
 
@@ -95,6 +95,84 @@ def test_validate_result_downgrades_unmatched_source():
     assert sections[0]["opportunities"] == []  # 来源未提及标的 → 降级
     assert sections[0]["related"][0]["title"].startswith("【来源待核实】")
     assert sections[1]["opportunities"][0]["target"] == "黄金ETF"  # 来源匹配 → 保留
+
+
+def test_validate_drops_fabricated_source_link():
+    items = [{"title": "真实采集的新闻", "summary": "s", "url": "http://real/1", "source": "t"}]
+    data = {
+        "market_position": [],
+        "sections": [
+            {"type": 3, "opportunities": [
+                {"target": "SpaceX", "code": "先跟踪", "platform": "美股", "industry": "", "material_role": "",
+                 "monopoly": "", "moat": "", "logic": "早期突破", "entry_exit": "e", "position_hint": "p",
+                 "target_return": "+30%", "stop_loss": "-10%", "risk": "r", "source_url": "http://fake/999"}],
+             "related": []},
+        ],
+    }
+    sections, _ = validate_result(data, items=items)
+    s3 = next(s for s in sections if s["type"] == 3)
+    # 编造链接：直接丢弃，不降级展示（避免带错文本和假链接）
+    assert s3["opportunities"] == [] and s3["related"] == []
+
+
+def test_related_with_fabricated_link_dropped():
+    items = [{"title": "真实采集的新闻", "summary": "s", "url": "http://real/1", "source": "t"}]
+    data = {
+        "market_position": [],
+        "sections": [
+            {"type": 1, "opportunities": [],
+             "related": [
+                 {"title": "假链接线索", "summary": "s", "why_possible": "w", "source_url": "http://fake/1"},
+                 {"title": "真链接线索", "summary": "s", "why_possible": "w", "source_url": "http://real/1"},
+             ]},
+        ],
+    }
+    sections, _ = validate_result(data, items=items)
+    s1 = next(s for s in sections if s["type"] == 1)
+    assert [r["title"] for r in s1["related"]] == ["真链接线索"]
+
+
+def test_type3_mature_asset_downgraded():
+    items = [{"title": "以太坊价格预测：分析师称将继续走高", "summary": "s", "url": "http://eth/1", "source": "t"}]
+    data = {
+        "market_position": [],
+        "sections": [
+            {"type": 3, "opportunities": [
+                {"target": "以太坊（ETH）", "code": "ETH", "platform": "加密货币", "industry": "", "material_role": "",
+                 "monopoly": "", "moat": "", "logic": "技术早期，跟踪", "entry_exit": "e", "position_hint": "p",
+                 "target_return": "+100%", "stop_loss": "-50%", "risk": "r", "source_url": "http://eth/1"}],
+             "related": []},
+        ],
+    }
+    sections, _ = validate_result(data, items=items)
+    s3 = next(s for s in sections if s["type"] == 3)
+    assert s3["opportunities"] == []
+    assert any("成熟资产" in r.get("why_possible", "") for r in s3["related"])
+
+
+def test_prompt_has_fact_discipline():
+    assert "事实纪律" in SYSTEM_PROMPT
+    assert "来源未提及" in SYSTEM_PROMPT
+    assert MATURE_TYPE3_ASSETS
+
+
+def test_ai_status_claims_stripped_from_related():
+    """AI 凭记忆写的『未上市』断言必须从输出中剔除（来源可能与之相反）。"""
+    items = [{"title": "马斯克：5年内人工智能将占到SpaceX估值的99%", "summary": "s",
+              "url": "http://eastmoney/spacex", "source": "t"}]
+    data = {
+        "market_position": [],
+        "sections": [
+            {"type": 3, "opportunities": [],
+             "related": [{"title": "马斯克谈SpaceX", "summary": "s",
+                          "why_possible": "AI与航天结合，但SpaceX未上市，仅作相关跟踪。",
+                          "source_url": "http://eastmoney/spacex"}]},
+        ],
+    }
+    sections, _ = validate_result(data, items=items)
+    s3 = next(s for s in sections if s["type"] == 3)
+    assert s3["related"]
+    assert "未上市" not in s3["related"][0]["why_possible"]
 
 
 def test_validate_result_merges_code_positions_with_ai_judgment():

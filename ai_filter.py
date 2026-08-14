@@ -18,6 +18,9 @@ MODEL = "deepseek-chat"
 
 ALLOWED_PLATFORMS = ("A股", "港股", "美股", "中国期货", "加密货币")
 
+# 系统3护栏：已运行多年、市场已形成的成熟资产，仅凭价格/预测类新闻不得升级为机会
+MATURE_TYPE3_ASSETS = ("比特币", "BTC", "以太坊", "ETH", "以太")
+
 _WATCHLIST_PROMPT = "\n".join(
     f"  {i}. {w['market']}：{w['targets']}" for i, w in enumerate(SYSTEM3_WATCHLIST, 1)
 )
@@ -40,15 +43,31 @@ SYSTEM_PROMPT = f"""你是专业的财经信息分析师。给定今日财经新
 0. 数据约束（最高优先级）：位置判断（周期低位区/高位区/震荡结构底部等）已由真实行情分位在代码中计算并随输入给出，你不得修改位置结论，不得编造任何点位、估值、涨跌幅；研判/进出场数字只能引用数据事实中的真实价格推算。
 1. 系统1：只给A股大型指数（沪深300/上证50，含其ETF/期货），必须是「月线级牛熊周期」的相对底部机会，严禁日线级别或个股。若数据事实显示A股处于「周期高位区」或「区间中位」，系统1的 opportunities 必须为空数组，可放政策/情绪类 related；
 2. 系统2：关键指数/黄金的大结构震荡底部反转，顺大趋势，给出明确价位与止损；优先检查黄金ETF（518880，数据事实中位置为「震荡结构底部」才给机会；高位/趋势不明则 opportunities 为空）；
-3. 系统3：固定跟踪五市场——{_WATCHLIST_PROMPT}。只识别「市场尚未形成、技术刚出现」的重大突破（如比特币初现、ChatGPT发布、首个具身智能人形机器人、早期SpaceX），这是1年以上的长期布局；严禁把成熟产业的日线事件当机会（只能放 related）；给出具体可交易载体与代码，尚无载体则 code 填「先跟踪」；
+3. 系统3：固定跟踪五市场——{_WATCHLIST_PROMPT}。只识别「市场尚未形成、技术刚出现」的重大突破（如比特币初现、ChatGPT发布、首个具身智能人形机器人、早期SpaceX），这是1年以上的长期布局；严禁把成熟产业的日线事件当机会（只能放 related）；给出具体可交易载体与代码，尚无载体则 code 填「先跟踪」；只有来源原文明确报道了「新技术/新产品首次出现或重大原型/商用突破」时才可列为机会，价格走势、预测、行情类新闻一律只放 related；比特币/以太坊等已运行多年、市场已形成的资产，仅凭价格或预测类新闻不得升级为机会；
 4. 系统4（紫苏叶理论）硬条件五条缺一不可：{SYSTEM4_RULES}。逐项标注 industry/material_role/monopoly/moat，并说明原材料价格处于低位、市场未被炒作；违反任一条的（如光伏多晶硅、AI服务器覆铜板CCL）一律不得作为机会；
 5. 标的市场只允许五类：A股、港股、美股、中国期货、加密货币；海外期货（CME商品）、外汇、CFD 等剔除；
 6. 每条机会必须给出具体进出场方案、仓位、预期离场收益率、止损收益率；target_return/stop_loss 只填数值或百分比（如"+30%"、"-10%"）；
 7. source_url 必须使用提供的原文链接且与标的高度相关（标题需提及该标的或其所属领域）；禁止引用无关宏观文章；
 8. market_position 只输出 A股/港股/美股/黄金 四条的 judgment，位置由代码给出、不要重复输出 position 字段；
-9. related 每类最多3条，opportunities 每类最多3条，宁缺毋滥；四类 sections 必须全部出现，无内容留空数组。"""
+9. related 每类最多3条，opportunities 每类最多3条，宁缺毋滥；四类 sections 必须全部出现，无内容留空数组。
+10. 事实纪律（防幻觉，最高优先级）：任何事实性表述（上市状态、市场阶段、成立时间、估值、市占率、涨跌幅等）必须能在所引用来源原文中找到依据；来源未提及的写「来源未提及」，严禁自行断言、猜测或编造；logic/why_possible 必须是对来源内容的转述，AI 记忆中的知识（公司上市状态、项目成立年限等）不得写入，除非来源原文支持。"""
 
 TYPES = [1, 2, 3, 4]
+
+# 上市状态断言（AI 常凭过时记忆编造，与新闻原文冲突）。来源未明确支持时一律从 AI 输出中剔除。
+_STATUS_PAT = re.compile(
+    r"[（(][^）)]*(?:未上市|已上市|尚未上市)[^）)]*[）)]"
+    r"|未上市|已上市|尚未上市|已上市公司|已挂牌上市"
+)
+
+
+def _strip_status(text: str) -> str:
+    """剔除 AI 文本中的上市状态断言，并清理残留的转折词。"""
+    if not text:
+        return ""
+    text = _STATUS_PAT.sub("", str(text))
+    text = re.sub(r"[，,]\s*但\s*[，,]", "，", text)
+    return text.strip("，,；;。 ")
 
 FALLBACK_ENTRY_EXIT = {
     1: "月线级周期相对底部：估值分位<30%时分4-6批建仓，估值分位>80%/情绪过热时离场",
@@ -123,7 +142,7 @@ def _clean_opp(o: dict) -> dict:
         "material_role": str(o.get("material_role", ""))[:120],
         "monopoly": str(o.get("monopoly", ""))[:80],
         "moat": str(o.get("moat", ""))[:120],
-        "logic": str(o.get("logic", ""))[:120],
+        "logic": _strip_status(o.get("logic", ""))[:120],
         "entry_exit": str(o.get("entry_exit", ""))[:180],
         "position_hint": str(o.get("position_hint", ""))[:120],
         "target_return": _clean_ret(o.get("target_return", ""))[:60],
@@ -136,8 +155,8 @@ def _clean_opp(o: dict) -> dict:
 def _clean_rel(r: dict) -> dict:
     return {
         "title": str(r.get("title", ""))[:80],
-        "summary": str(r.get("summary", ""))[:120],
-        "why_possible": str(r.get("why_possible", ""))[:120],
+        "summary": _strip_status(r.get("summary", ""))[:120],
+        "why_possible": _strip_status(r.get("why_possible", ""))[:120],
         "source_url": str(r.get("source_url", "")),
     }
 
@@ -164,7 +183,7 @@ def _source_check(o: dict, url_to_title: dict):
 def _downgrade_to_related(o: dict, reason: str) -> dict:
     return {
         "title": f"【来源待核实】{o.get('target', '')}",
-        "summary": str(o.get("logic", ""))[:100],
+        "summary": _strip_status(o.get("logic", ""))[:100],
         "why_possible": reason,
         "source_url": str(o.get("source_url", "")),
     }
@@ -179,16 +198,32 @@ def validate_result(data: dict, items: list = None, code_positions: list = None)
         s = secs_raw.get(t, {})
         opps = [_clean_opp(o) for o in (s.get("opportunities") or []) if isinstance(o, dict) and o.get("target")]
         rels = [_clean_rel(r) for r in (s.get("related") or []) if isinstance(r, dict) and r.get("title")]
+        downgraded = []
         if items:
-            kept, downgraded = [], []
+            kept = []
             for o in opps:
                 keep, reason = _source_check(o, url_to_title)
                 if keep:
                     kept.append(o)
+                elif "不在当日采集列表中" in reason or "缺少来源链接" in reason:
+                    log.info("丢弃无法核实的条目：%s（%s）", o.get("target"), reason)
                 else:
                     downgraded.append(_downgrade_to_related(o, reason))
             opps = kept
-            rels = (downgraded + rels)[:3]
+            # 相关线索同样校验来源：URL 缺失或不在当日采集列表的一律丢弃（疑似编造）
+            rels = [r for r in rels if r.get("source_url") and r.get("source_url") in url_to_title]
+        if t == 3:
+            # 系统3护栏：成熟资产仅凭价格/预测类新闻不得列为「市场形成前」机会
+            kept = []
+            for o in opps:
+                base = _target_base(o.get("target", ""))
+                if any(m.lower() in base.lower() for m in MATURE_TYPE3_ASSETS):
+                    downgraded.append(_downgrade_to_related(
+                        o, f"『{base}』为已运行多年的成熟资产，价格/预测类新闻不符合系统3「市场形成前」条件，降级为线索"))
+                else:
+                    kept.append(o)
+            opps = kept
+        rels = (downgraded + rels)[:3]
         sections.append({"type": t, "opportunities": opps[:3], "related": rels[:3]})
 
     mp = []
