@@ -2,8 +2,9 @@ name: Daily Finance Report
 
 on:
   schedule:
-    # UTC 00:30 = 北京时间 08:30
-    - cron: "30 0 * * *"
+    # GitHub Actions 定时任务实测延迟约 3 小时：
+    # UTC 21:35（北京 05:35）+ 延迟 ≈ 北京 08:30 送达
+    - cron: "35 21 * * *"
   workflow_dispatch:
 
 permissions:
