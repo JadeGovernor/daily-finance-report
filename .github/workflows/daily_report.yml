@@ -40,6 +40,12 @@ jobs:
           SENDKEY: ${{ secrets.SENDKEY }}
         run: python main.py
 
+      - name: Deploy public site (GitHub Pages)
+        if: success()
+        env:
+          SITE_DEPLOY_TOKEN: ${{ secrets.SITE_DEPLOY_TOKEN }}
+        run: python scripts/deploy_site.py
+
       - name: Notify Feishu on success
         if: success()
         env:
