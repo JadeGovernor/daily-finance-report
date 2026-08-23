@@ -20,6 +20,52 @@ SRC = pathlib.Path("output/report.html")
 BUILD = pathlib.Path("/tmp/che-site")
 KEEP_DAYS = 90
 
+GATE_HASH = "f00d0e94577089bd5d28080bb3d42c62e74c4527887909b2370e222835db6603"  # SHA-256("CHEZHI")
+
+GATE_STYLE = """
+<style>
+#che-gate{position:fixed;inset:0;z-index:99999;background:#f5f6f8;display:flex;align-items:center;justify-content:center;font-family:-apple-system,'PingFang SC',sans-serif}
+#che-gate .box{background:#fff;border:1px solid #e0e0e0;border-radius:12px;padding:32px 28px;width:320px;box-shadow:0 8px 30px rgba(0,0,0,.08);text-align:center}
+#che-gate h1{font-size:20px;margin:0 0 6px;color:#222}
+#che-gate p{font-size:13px;color:#888;margin:0 0 16px}
+#che-gate input{width:100%;box-sizing:border-box;padding:10px 12px;border:1px solid #d0d0d0;border-radius:8px;font-size:15px;outline:none}
+#che-gate input:focus{border-color:#1565c0}
+#che-gate button{width:100%;margin-top:12px;padding:10px;border:0;border-radius:8px;background:#1565c0;color:#fff;font-size:15px;cursor:pointer}
+#che-gate .err{color:#c62828;font-size:13px;margin-top:10px;min-height:18px}
+</style>
+"""
+
+GATE_DIV = """
+<div id="che-gate"><div class="box"><h1>🔒 CHE直早报</h1><p>请输入访问密码</p>
+<form id="che-form" autocomplete="off"><input id="che-pass" type="password" placeholder="访问密码" />
+<button type="submit">进入</button></form><div class="err" id="che-err"></div></div></div>
+"""
+
+GATE_SCRIPT = """
+<script>
+(function(){
+  var HASH = "f00d0e94577089bd5d28080bb3d42c62e74c4527887909b2370e222835db6603";
+  var gate = document.getElementById("che-gate");
+  var form = document.getElementById("che-form");
+  var input = document.getElementById("che-pass");
+  var err = document.getElementById("che-err");
+  function unlock(){ if (gate) gate.style.display = "none"; }
+  if (sessionStorage.getItem("che_unlocked") === "1") { unlock(); return; }
+  function hex(buf){ return Array.prototype.map.call(new Uint8Array(buf), function(b){ return b.toString(16).padStart(2,"0"); }).join(""); }
+  form.addEventListener("submit", function(e){
+    e.preventDefault();
+    var v = (input.value || "").trim();
+    if (!v) return;
+    if (!window.crypto || !window.crypto.subtle) { err.textContent = "当前浏览器不支持加密校验，请更换浏览器"; return; }
+    crypto.subtle.digest("SHA-256", new TextEncoder().encode(v)).then(function(buf){
+      if (hex(buf) === HASH) { sessionStorage.setItem("che_unlocked", "1"); unlock(); }
+      else { err.textContent = "密码错误，请重试"; input.value = ""; input.focus(); }
+    });
+  });
+})();
+</script>
+"""
+
 NAV = (
     '<div style="max-width:860px;margin:0 auto;padding:10px 16px 0;font-size:13px;'
     'font-family:-apple-system,\'PingFang SC\',sans-serif">'
@@ -29,6 +75,19 @@ NAV = (
 
 def _with_nav(content: str) -> str:
     return re.sub(r"(<body[^>]*>)", r"\1" + NAV, content, count=1)
+
+
+def _with_gate(content: str) -> str:
+    if "che-gate" in content:
+        return content
+    content = content.replace("<head>", "<head>" + GATE_STYLE, 1)
+    content = re.sub(r"(<body[^>]*>)", r"\1" + GATE_DIV, content, count=1)
+    content = content.replace("</body>", GATE_SCRIPT + "</body>", 1)
+    return content
+
+
+def _protect(content: str) -> str:
+    return _with_gate(_with_nav(content))
 
 
 def _report_date(content: str) -> str:
@@ -45,8 +104,8 @@ def build() -> pathlib.Path:
     (BUILD / "archive").mkdir(parents=True)
     content = SRC.read_text(encoding="utf-8")
     date_str = _report_date(content)
-    (BUILD / "index.html").write_text(_with_nav(content), encoding="utf-8")
-    (BUILD / "archive" / f"{date_str}.html").write_text(_with_nav(content), encoding="utf-8")
+    (BUILD / "index.html").write_text(_protect(content), encoding="utf-8")
+    (BUILD / "archive" / f"{date_str}.html").write_text(_protect(content), encoding="utf-8")
 
     archives = sorted((BUILD / "archive").glob("*.html"), reverse=True)
     rows = "\n".join(
@@ -61,7 +120,7 @@ def build() -> pathlib.Path:
 <ol style="line-height:1.9">{rows}</ol>
 <p style="margin-top:18px"><a href="index.html" style="color:#1565c0">← 返回最新一期</a></p>
 </div></body></html>"""
-    (BUILD / "archive.html").write_text(index, encoding="utf-8")
+    (BUILD / "archive.html").write_text(_protect(index), encoding="utf-8")
     return BUILD
 
 

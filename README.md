@@ -1,6 +1,7 @@
 # 📈 CHE直早报（Daily Finance Report）
 
 > 🌐 公网网页版（每天约 8:30 自动更新）：https://jadegovernor.github.io/daily-finance-report-site/
+> 🔒 网页版访问密码：`CHEZHI`（密码以哈希形式内嵌，仅供轻量防浏览，非强安全）
 
 每天北京时间 9:00 自动采集全网财经信息 → 用真实行情数据计算市场位置 → AI 按你的四大交易系统筛选机会 → 生成简报 → 邮件推送（可选叠加微信 Server酱）。
 
