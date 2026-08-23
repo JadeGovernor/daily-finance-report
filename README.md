@@ -17,6 +17,20 @@
 - **推送**：SMTP 邮件（必选）+ Server酱 微信（可选双通道）
 - **调度**：GitHub Actions 免费运行，`cron: "0 1 * * *"`（UTC）= 北京 9:00，支持手动触发
 
+## 📥 给使用者：下载与安装（两种方式）
+
+**方式一：AI 一键安装（推荐）**
+把 [`INSTALL_PROMPT.md`](INSTALL_PROMPT.md) 里「复制我」到「复制结束」的提示词，整段发给你的 AI 编程助手（Codex / OpenClaw / Cursor / Claude Code 等），它会自动克隆仓库、装依赖、引导你配置邮箱与 API Key，并跑通测试。
+
+**方式二：手动安装**
+1. 点仓库右上角绿色 **Code ▾ → Download ZIP**，解压到本地；或 `git clone https://github.com/JadeGovernor/daily-finance-report.git`
+2. macOS/Linux：终端运行 `bash scripts/setup.sh`；Windows：双击 `scripts\setup.bat`
+3. 编辑生成的 `.env` 文件，填入 SMTP 邮箱授权码、收件邮箱、DeepSeek API Key
+4. 验证：`python scripts/check_env.py`；试跑：`python main.py --dry-run --no-push`
+5. 正式发送：`./scripts/run_daily.sh`（Windows：`scripts\run_daily.bat`）
+
+> ⚠️ 隐私提醒：`.env` 已加入 .gitignore，包含你的邮箱授权码与 API Key，**绝不要**提交或发给别人；每个使用者都要配置自己的。
+
 ## 快速开始
 1. 把本项目推到你的 GitHub 仓库
 2. 配置 Secrets（见下）
