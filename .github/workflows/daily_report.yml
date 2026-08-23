@@ -40,6 +40,24 @@ jobs:
           SENDKEY: ${{ secrets.SENDKEY }}
         run: python main.py
 
+      - name: Notify Feishu on success
+        if: success()
+        env:
+          FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
+        run: |
+          curl -sS -X POST -H "Content-Type: application/json" \
+            -d '{"msg_type":"text","content":{"text":"✅ CHE直早报今日日报已生成并推送（邮件+微信）。"}}' \
+            "$FEISHU_WEBHOOK" || true
+
+      - name: Notify Feishu on failure
+        if: failure()
+        env:
+          FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
+        run: |
+          curl -sS -X POST -H "Content-Type: application/json" \
+            -d '{"msg_type":"text","content":{"text":"❌ 今日日报生成失败，请查看 GitHub Actions 运行日志；也可在飞书发「重跑日报」让本地重跑。"}}' \
+            "$FEISHU_WEBHOOK" || true
+
       - name: Upload report artifact
         if: always()
         uses: actions/upload-artifact@v4
