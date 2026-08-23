@@ -5,18 +5,27 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(dirname "$SCRIPT_DIR")"
 cd "$ROOT"
 
-echo "==> 1/4 检查 Python"
-if ! command -v python3 >/dev/null 2>&1; then
-  echo "未找到 python3，请先安装 Python 3.10+（https://python.org）"
+echo "==> 1/4 检查 Python（优先 3.11/3.12）"
+PY=""
+for c in python3.11 python3.12 python3.13 python3.10 python3; do
+  if command -v "$c" >/dev/null 2>&1; then PY="$c"; break; fi
+done
+if [[ -z "$PY" ]]; then
+  echo "未找到 Python 3.10+，请先安装（https://python.org）"
   exit 1
 fi
+echo "使用 $($PY --version)（$PY）"
 
 echo "==> 2/4 创建虚拟环境并安装依赖"
-python3 -m venv .venv
+"$PY" -m venv .venv
 # shellcheck disable=SC1091
 source .venv/bin/activate
-pip install --upgrade pip -q
-pip install -r requirements.txt -q
+if ! command -v pip >/dev/null 2>&1; then
+  echo "（venv 未自带 pip，改用官方引导脚本安装）"
+  curl -sS https://bootstrap.pypa.io/get-pip.py | "$PY"
+fi
+python -m pip install --upgrade pip -q
+python -m pip install -r requirements.txt -q
 
 echo "==> 3/4 生成配置文件"
 if [[ ! -f .env ]]; then
